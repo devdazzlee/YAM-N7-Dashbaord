@@ -46,37 +46,53 @@ import cron from 'node-cron';
 const vAPI = process.env.vAPI || '/api/v1';
 const app = express();
 
+const normalizeOrigin = (value: string) => value.replace(/\/$/, '');
+
+const defaultAllowedOrigins = [
+  'https://yam-n7.vercel.app',
+  'https://yam-n7-dashbaord-ipo9.vercel.app',
+  'https://yam-n7-dashbaord.vercel.app',
+  'https://pos.manpasandstore.com',
+  'https://manpasand-pos-t623.vercel.app',
+  'https://manpasand-pos-beta.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5173',
+  'https://manpasandstore.com',
+  'https://www.manpasandstore.com',
+];
+
+const allowedOrigins = new Set(
+  [
+    ...defaultAllowedOrigins,
+    ...(process.env.CORS_ORIGINS || '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+  ].map(normalizeOrigin),
+);
+
 // Middleware — CORS must run before route handlers and cache headers.
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
 
-    const allowedOrigins = [
-      'https://yam-n7.vercel.app',
-      'https://yam-n7-dashbaord-ipo9.vercel.app',
-      'https://pos.manpasandstore.com',
-      'https://manpasand-pos-t623.vercel.app',
-      'https://manpasand-pos-beta.vercel.app',
-      'http://localhost:3000',
-      'http://localhost:3001',
-      'http://localhost:5173',
-      'https://manpasandstore.com',
-      'https://www.manpasandstore.com',
-    ];
+    const normalized = normalizeOrigin(origin);
+    const originMatch = allowedOrigins.has(normalized);
 
-    const originMatch = allowedOrigins.some(
-      (allowed) => origin === allowed || origin === `${allowed}/`,
-    );
+    // YAM-N7 Vercel previews/production (e.g. yam-n7.vercel.app, yam-n7-dashbaord-ipo9.vercel.app)
+    const isYamN7Vercel = /^https:\/\/yam-n7[\w-]*\.vercel\.app$/i.test(normalized);
 
     // In local dev, allow any localhost port (Next.js may use 3000, 3001, etc.)
     const isLocalDev =
       process.env.NODE_ENV !== 'production' &&
-      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized);
 
-    if (originMatch || isLocalDev) {
+    if (originMatch || isYamN7Vercel || isLocalDev) {
       callback(null, true);
     } else {
+      console.error(`CORS blocked origin: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
