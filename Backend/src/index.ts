@@ -53,6 +53,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
 
     const allowedOrigins = [
+      'https://yam-n7.vercel.app',
       'https://pos.manpasandstore.com',
       'https://manpasand-pos-t623.vercel.app',
       'https://manpasand-pos-beta.vercel.app',

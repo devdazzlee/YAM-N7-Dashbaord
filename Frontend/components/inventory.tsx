@@ -27,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/hooks/use-toast"
-import { Search, Plus, Edit, Package, AlertTriangle, Upload, X, ImageIcon, RefreshCw, Loader2, Trash2, Tag } from "lucide-react"
+import { Search, Plus, Edit, Package, AlertTriangle, X, ImageIcon, RefreshCw, Loader2, Trash2, Tag } from "lucide-react"
 import apiClient from "@/lib/apiClient"
 import { usePosData } from "@/hooks/use-pos-data"
 import { usePosBranch } from "@/hooks/use-pos-branch"
@@ -131,6 +131,9 @@ interface Product {
   maximum_stock?: number
 }
 
+const rel = (id?: string, name?: string) =>
+  id ? { id, name: name || "" } : undefined
+
 const mapStoreProductToCard = (product: any): Product => ({
   id: product.id,
   name: product.name,
@@ -151,14 +154,14 @@ const mapStoreProductToCard = (product: any): Product => ({
   non_inventory_item: product.non_inventory_item ?? false,
   is_deal: product.is_deal ?? false,
   is_featured: product.is_featured ?? false,
-  unit: { id: product.unitId, name: product.unitName },
-  tax: { id: product.taxId, name: product.taxName },
-  category: { id: product.categoryId, name: product.category },
-  subcategory: { id: product.subcategoryId, name: product.subcategory },
-  supplier: { id: product.supplierId, name: product.supplierName },
-  brand: { id: product.brandId, name: product.brandName },
-  color: { id: product.colorId, name: product.colorName },
-  size: { id: product.sizeId, name: product.sizeName },
+  unit: rel(product.unitId, product.unitName),
+  tax: rel(product.taxId, product.taxName),
+  category: rel(product.categoryId, product.category),
+  subcategory: rel(product.subcategoryId, product.subcategory),
+  supplier: rel(product.supplierId, product.supplierName),
+  brand: rel(product.brandId, product.brandName),
+  color: rel(product.colorId, product.colorName),
+  size: rel(product.sizeId, product.sizeName),
   available_stock: product.available_stock ?? product.stock ?? 0,
   current_stock: product.current_stock ?? product.stock ?? 0,
   reserved_stock: product.reserved_stock ?? 0,
@@ -248,9 +251,9 @@ const ProductForm = ({
   colors,
   sizes,
   imagePreviews,
-  isUploadingImages,
   handleRemoveImage,
-  onTriggerImageUpload,
+  fileInputRef,
+  handleImageSelect,
   stockToAdd,
   setStockToAdd,
   stockBranchIds,
@@ -274,9 +277,9 @@ const ProductForm = ({
   colors: DropdownOption[]
   sizes: DropdownOption[]
   imagePreviews: string[]
-  isUploadingImages: boolean
   handleRemoveImage: (index: number) => void
-  onTriggerImageUpload: () => void
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+  handleImageSelect: (event: React.ChangeEvent<HTMLInputElement>) => void
   stockToAdd: number
   setStockToAdd: (n: number) => void
   stockBranchIds: string[]
@@ -286,7 +289,6 @@ const ProductForm = ({
   currentBranchStocks?: Record<string, number>
 }) => {
   const hasErrors = Object.values(formErrors).some((error) => !!error)
-  const canUploadMoreImages = imagePreviews.length < 10 && !isUploadingImages
 
   // Raw text state for numeric inputs. We keep it independent of formData
   // so users can naturally type "0.", "1.5", clear to empty, etc., without the
@@ -783,40 +785,14 @@ const ProductForm = ({
               ))}
             </div>
           )}
-          <button
-            type="button"
-            disabled={!canUploadMoreImages}
-            onClick={onTriggerImageUpload}
-            className={cn(
-              "relative w-full h-32 border-2 border-dashed border-gray-300 rounded-lg overflow-hidden transition-colors flex flex-col items-center justify-center bg-white",
-              canUploadMoreImages
-                ? "cursor-pointer hover:border-gray-400 hover:bg-gray-50"
-                : "cursor-not-allowed opacity-60",
-            )}
+          <div
+            className="w-full h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-gray-400 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
           >
-            {isUploadingImages ? (
-              <>
-                <Loader2 className="h-8 w-8 text-blue-600 mb-2 animate-spin" />
-                <p className="text-sm text-gray-600">Uploading image...</p>
-              </>
-            ) : (
-              <>
-                <ImageIcon className="h-8 w-8 text-gray-400 mb-2" />
-                <p className="text-sm text-gray-500">Click to upload images</p>
-                <p className="text-xs text-gray-400">PNG, JPG up to 5MB (max 10 images)</p>
-              </>
-            )}
-          </button>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            disabled={!canUploadMoreImages}
-            onClick={onTriggerImageUpload}
-          >
-            <Upload className="h-4 w-4 mr-2" />
-            {isUploadingImages ? "Uploading..." : imagePreviews.length ? "Add More Images" : "Upload Images"}
-          </Button>
+            <ImageIcon className="h-8 w-8 text-gray-400 mb-2" />
+            <p className="text-sm text-gray-500">Click or drag to upload images</p>
+            <p className="text-xs text-gray-400">PNG, JPG up to 5MB (max 10 images)</p>
+          </div>
         </div>
       </div>
 
@@ -938,10 +914,6 @@ export default function Inventory() {
     Record<string, number>
   >({})
 
-  // Tracks the GET /products/:id call fired from openEditDialog. While true,
-  // the Edit dialog renders a skeleton instead of the half-populated form so
-  // the user never sees fields blink from empty → filled.
-  const [isLoadingEditProduct, setIsLoadingEditProduct] = useState(false)
   const [formData, setFormData] = useState<ProductFormData>({
     name: "",
     unit_id: "",
@@ -960,9 +932,8 @@ export default function Inventory() {
     images: [],
   })
   const [formLoading, setFormLoading] = useState(false)
-  const [isUploadingImages, setIsUploadingImages] = useState(false)
   const [isClient, setIsClient] = useState(false)
-  const productFileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [formErrors, setFormErrors] = useState<{ sku?: string; pct_or_hs_code?: string }>({})
   const [imagePreviews, setImagePreviews] = useState<string[]>([])     // URLs for display (all are Cloudinary URLs)
   const [existingImageUrls, setExistingImageUrls] = useState<string[]>([]) // URLs to send in PATCH/POST
@@ -1101,42 +1072,6 @@ export default function Inventory() {
     setIsClient(true)
     loadDropdownData()
   }, [])
-
-  const canUploadMoreImages = imagePreviews.length < 10 && !isUploadingImages
-
-  const triggerProductImageUpload = () => {
-    if (!canUploadMoreImages) return
-
-    const input = productFileInputRef.current
-    if (!input) {
-      toast({
-        title: "Upload unavailable",
-        description: "File picker could not open. Please refresh the page.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    if (typeof input.showPicker === "function") {
-      try {
-        input.showPicker()
-        return
-      } catch {
-        // showPicker can throw if not in a user gesture; fall back to click.
-      }
-    }
-
-    input.click()
-  }
-
-  const handleProductFileInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = event.target.files
-    if (!selected?.length) return
-
-    const files = Array.from(selected)
-    event.target.value = ""
-    void handleUploadFiles(files)
-  }
 
   useEffect(() => {
     if (!globalLoading) {
@@ -1499,7 +1434,6 @@ export default function Inventory() {
     })
     setImagePreviews([])
     setExistingImageUrls([])
-    setIsUploadingImages(false)
     setStockToAdd(0)
     // Re-seed the stock branches from the user's current branch so a fresh
     // Add dialog opens with at least one sensible default checked.
@@ -1507,111 +1441,140 @@ export default function Inventory() {
     setCurrentBranchStocks({})
   }
 
-  const openEditDialog = async (product: Product) => {
-    // Open the modal in a "loading" state — we DON'T show the form until the
-    // canonical record arrives, so the user never sees fields flash from
-    // empty/"Unknown" to their real values.
-    setEditingProduct(product)
-    setIsEditDialogOpen(true)
-    setIsLoadingEditProduct(true)
-    setStockToAdd(0)
+  const ensureProductRelationsInDropdowns = (product: Product) => {
+    const merge = (
+      setter: (value: DropdownOption[] | ((prev: DropdownOption[]) => DropdownOption[])) => void,
+      rel?: DropdownOption,
+    ) => {
+      if (!rel?.id || !rel.name) return
+      setter((prev) =>
+        prev.some((item) => item.id === rel.id) ? prev : [...prev, rel],
+      )
+    }
+    merge(setUnits, product.unit)
+    merge(setTaxes, product.tax)
+    merge(setCategories, product.category)
+    merge(setSubcategories, product.subcategory)
+    merge(setSuppliers, product.supplier)
+    merge(setBrands, product.brand)
+    merge(setColors, product.color)
+    merge(setSizes, product.size)
+  }
 
-    const toNum = (v: any): number => {
+  /** Add dialog shares form state with Edit — always clear when opening Add. */
+  const handleAddDialogOpenChange = (open: boolean) => {
+    if (open) {
+      setEditingProduct(null)
+      setIsEditDialogOpen(false)
+      resetForm()
+    }
+    setIsAddDialogOpen(open)
+  }
+
+  const loadEditProductStockDetails = async (productId: string) => {
+    const toNum = (v: unknown): number => {
       if (v === null || v === undefined || v === "") return 0
       const n = typeof v === "string" ? parseFloat(v) : Number(v)
       return Number.isFinite(n) ? n : 0
     }
 
     try {
-      const detail = await apiService.getProductById(product.id)
+      const detail = await apiService.getProductById(productId)
       const fresh = detail?.data ?? detail
-      if (!fresh) throw new Error("Empty product detail response")
+      if (!fresh) return
 
-      const existingUrls: string[] =
-        fresh.ProductImage?.map((img: any) => img.image) ||
-        (Array.isArray(fresh.images)
-          ? fresh.images.map((img: any) => (typeof img === "string" ? img : img.image))
-          : []) ||
-        []
-
-      setFormData({
-        name: fresh.name ?? "",
-        unit_id: fresh.unit?.id ?? "",
-        pct_or_hs_code: fresh.pct_or_hs_code ?? "",
-        description: fresh.description ?? "",
-        sku: fresh.sku ?? product.sku,
-        purchase_rate: toNum(fresh.purchase_rate),
-        sales_rate_exc_dis_and_tax: toNum(fresh.sales_rate_exc_dis_and_tax),
-        sales_rate_inc_dis_and_tax: toNum(fresh.sales_rate_inc_dis_and_tax),
-        discount_amount: toNum(fresh.discount_amount),
-        tax_id: fresh.tax?.id ?? "",
-        category_id: fresh.category?.id ?? "",
-        subcategory_id: fresh.subcategory?.id ?? "",
-        min_qty: toNum(fresh.min_qty),
-        max_qty: toNum(fresh.max_qty),
-        supplier_id: fresh.supplier?.id ?? "",
-        brand_id: fresh.brand?.id ?? "",
-        color_id: fresh.color?.id ?? "",
-        size_id: fresh.size?.id ?? "",
-        is_active: fresh.is_active ?? true,
-        display_on_pos: fresh.display_on_pos ?? true,
-        is_batch: fresh.is_batch ?? false,
-        auto_fill_on_demand_sheet: fresh.auto_fill_on_demand_sheet ?? false,
-        non_inventory_item: fresh.non_inventory_item ?? false,
-        is_deal: fresh.is_deal ?? false,
-        is_featured: fresh.is_featured ?? false,
-        images: existingUrls,
-      })
-
-      if (fresh.supplier?.id && fresh.supplier?.name) {
-        setSuppliers((prev) =>
-          prev.some((item) => item.id === fresh.supplier.id)
-            ? prev
-            : [...prev, { id: fresh.supplier.id, name: fresh.supplier.name }]
-        )
-      }
-      setImagePreviews(existingUrls)
-      setExistingImageUrls(existingUrls)
-
-      // Build a per-branch current-stock map so the Branches popover can
-      // display "Current: N" beside each option. Backend may return
-      // current_quantity as a Decimal-string; coerce to number.
       const branchStockMap: Record<string, number> = {}
       if (Array.isArray(fresh.stock)) {
         for (const s of fresh.stock) {
           if (!s?.branch_id) continue
           const cur = toNum(s.current_quantity)
           const res = toNum(s.reserved_quantity)
-          branchStockMap[s.branch_id] = cur - res // available
+          branchStockMap[s.branch_id] = cur - res
         }
       }
       setCurrentBranchStocks(branchStockMap)
 
-      // Pre-select branches this product already has stock in (any quantity,
-      // including 0). Falls back to the user's current POS branch when this
-      // product has no stock rows yet.
-      const stockBranches: string[] = Object.keys(branchStockMap)
+      const stockBranches = Object.keys(branchStockMap)
       if (stockBranches.length > 0) {
         setStockBranchIds(Array.from(new Set(stockBranches)))
       } else if (selectedBranchId) {
         setStockBranchIds([selectedBranchId])
-      } else {
-        setStockBranchIds([])
       }
     } catch {
-      // Hard-fail: close the modal and tell the user. Showing a half-filled
-      // form would be worse — they'd save partial data and overwrite the real
-      // record.
-      setIsEditDialogOpen(false)
-      setEditingProduct(null)
-      toast({
-        title: "Couldn't load product",
-        description: "Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoadingEditProduct(false)
+      // Non-blocking — form fields are already populated from the list row.
     }
+  }
+
+  const openEditDialog = (product: Product) => {
+    setIsAddDialogOpen(false)
+    setEditingProduct(product)
+    setStockToAdd(0)
+    ensureProductRelationsInDropdowns(product)
+
+    const existingUrls = product.images?.map((img) => img.image) || []
+    const minFromProduct = product.min_qty != null ? Number(product.min_qty) : NaN
+    const minFromStock = product.minimum_stock != null ? Number(product.minimum_stock) : NaN
+    const effectiveMinQty =
+      Number.isFinite(minFromProduct) && minFromProduct > 0
+        ? minFromProduct
+        : Number.isFinite(minFromStock) && minFromStock > 0
+          ? minFromStock
+          : Number.isFinite(minFromProduct)
+            ? minFromProduct
+            : Number.isFinite(minFromStock)
+              ? minFromStock
+              : 0
+    const maxFromProduct = product.max_qty != null ? Number(product.max_qty) : NaN
+    const maxFromStock = product.maximum_stock != null ? Number(product.maximum_stock) : NaN
+    const effectiveMaxQty =
+      Number.isFinite(maxFromProduct) && maxFromProduct > 0
+        ? maxFromProduct
+        : Number.isFinite(maxFromStock) && maxFromStock > 0
+          ? maxFromStock
+          : Number.isFinite(maxFromProduct)
+            ? maxFromProduct
+            : Number.isFinite(maxFromStock)
+              ? maxFromStock
+              : 0
+
+    setFormData({
+      name: product.name,
+      unit_id: product.unit?.id || "",
+      pct_or_hs_code: product.pct_or_hs_code || "",
+      description: product.description || "",
+      sku: product.sku,
+      purchase_rate: product.purchase_rate,
+      sales_rate_exc_dis_and_tax: product.sales_rate_exc_dis_and_tax,
+      sales_rate_inc_dis_and_tax: product.sales_rate_inc_dis_and_tax,
+      discount_amount: product.discount_amount || 0,
+      tax_id: product.tax?.id || "",
+      category_id: product.category?.id || "",
+      subcategory_id: product.subcategory?.id || "",
+      min_qty: effectiveMinQty,
+      max_qty: effectiveMaxQty,
+      supplier_id: product.supplier?.id || "",
+      brand_id: product.brand?.id || "",
+      color_id: product.color?.id || "",
+      size_id: product.size?.id || "",
+      is_active: product.is_active,
+      display_on_pos: product.display_on_pos,
+      is_batch: product.is_batch,
+      auto_fill_on_demand_sheet: product.auto_fill_on_demand_sheet,
+      non_inventory_item: product.non_inventory_item,
+      is_deal: product.is_deal,
+      is_featured: product.is_featured,
+      images: existingUrls,
+    })
+    setImagePreviews(existingUrls)
+    setExistingImageUrls(existingUrls)
+    setCurrentBranchStocks({})
+    if (selectedBranchId) {
+      setStockBranchIds([selectedBranchId])
+    } else {
+      setStockBranchIds([])
+    }
+    setIsEditDialogOpen(true)
+    void loadEditProductStockDetails(product.id)
   }
 
   const updateFormData = (field: keyof ProductFormData, value: any) => {
@@ -1621,12 +1584,13 @@ export default function Inventory() {
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
 
-  const handleUploadFiles = async (files: File[]) => {
-    if (!files.length) return
+  const handleImageSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files
+    if (!files) return
 
-    setIsUploadingImages(true)
+    setFormLoading(true)
     try {
-      for (const file of files) {
+      for (const file of Array.from(files)) {
         if (!file.type.startsWith("image/")) {
           toast({ title: "Error", description: `${file.name} is not an image.`, variant: "destructive" })
           continue
@@ -1636,38 +1600,33 @@ export default function Inventory() {
           continue
         }
 
-        const localPreview = URL.createObjectURL(file)
-        setImagePreviews((prev) => [...prev, localPreview])
+        const compressed = await compressImage(file)
+        const url = await apiService.uploadImage(compressed)
 
-        try {
-          const compressed = await compressImage(file)
-          const url = await apiService.uploadImage(compressed)
-
-          setImagePreviews((prev) =>
-            prev.map((preview) => (preview === localPreview ? url : preview)),
-          )
-          setExistingImageUrls((prev) => [...prev, url])
-        } catch (uploadError) {
-          setImagePreviews((prev) => prev.filter((preview) => preview !== localPreview))
-          throw uploadError
-        } finally {
-          URL.revokeObjectURL(localPreview)
-        }
+        setImagePreviews((prev) => [...prev, url])
+        setExistingImageUrls((prev) => [...prev, url])
       }
     } catch (error: any) {
       const message =
         error?.response?.data?.message ||
         error?.message ||
-        "Failed to upload image. Check that the backend is running on port 9000."
-      toast({ title: "Upload failed", description: message, variant: "destructive" })
+        "Failed to upload image."
+      toast({ title: "Error", description: message, variant: "destructive" })
     } finally {
-      setIsUploadingImages(false)
+      setFormLoading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
     }
   }
 
   const handleRemoveImage = (index: number) => {
-    const removedUrl = imagePreviews[index]
-    setExistingImageUrls((prev) => prev.filter((url) => url !== removedUrl))
+    const removedPreview = imagePreviews[index]
+    if (removedPreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(removedPreview)
+    }
+    const removedSubmit = existingImageUrls[index]
+    setExistingImageUrls((prev) => prev.filter((url) => url !== removedSubmit))
     setImagePreviews((prev) => prev.filter((_, i) => i !== index))
   }
 
@@ -1688,18 +1647,7 @@ export default function Inventory() {
               <p className="text-xs md:text-sm text-blue-600 mt-1">Loading data from cache...</p>
             )}
           </div>
-          <Dialog
-            open={isAddDialogOpen}
-            onOpenChange={(open) => {
-              if (open) {
-                // Always start the Add form from a clean slate so values left
-                // behind from a previous Edit can't leak across dialogs.
-                resetForm()
-                setEditingProduct(null)
-              }
-              setIsAddDialogOpen(open)
-            }}
-          >
+          <Dialog open={isAddDialogOpen} onOpenChange={handleAddDialogOpenChange}>
             <DialogTrigger asChild>
               <Button
                 onClick={() => {
@@ -1731,9 +1679,9 @@ export default function Inventory() {
                 colors={colors}
                 sizes={sizes}
                 imagePreviews={imagePreviews}
-                isUploadingImages={isUploadingImages}
                 handleRemoveImage={handleRemoveImage}
-                onTriggerImageUpload={triggerProductImageUpload}
+                fileInputRef={fileInputRef}
+                handleImageSelect={handleImageSelect}
                 stockToAdd={stockToAdd}
                 setStockToAdd={setStockToAdd}
                 stockBranchIds={stockBranchIds}
@@ -2101,59 +2049,33 @@ export default function Inventory() {
             <DialogHeader>
               <DialogTitle>Edit Product</DialogTitle>
             </DialogHeader>
-            {isLoadingEditProduct ? (
-              // Skeleton roughly mirrors the form layout so the modal doesn't
-              // jump when the data arrives. Anything more elaborate is a CLS
-              // hazard; users care that they know it's loading, not what
-              // shape it'll be.
-              <div className="space-y-6 py-2">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading product details...
-                </div>
-                {[1, 2, 3].map((section) => (
-                  <div key={section} className="space-y-3">
-                    <div className="h-5 w-40 bg-gray-200 animate-pulse rounded" />
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {[1, 2, 3, 4].map((row) => (
-                        <div key={row} className="space-y-1.5">
-                          <div className="h-3 w-24 bg-gray-200 animate-pulse rounded" />
-                          <div className="h-10 w-full bg-gray-100 animate-pulse rounded-md" />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <ProductForm
-                onSubmit={handleUpdateProduct}
-                loading={formLoading}
-                submitText="Update Product"
-                formData={formData}
-                formErrors={formErrors}
-                updateFormData={updateFormData}
-                units={units}
-                categories={categories}
-                subcategories={subcategories}
-                taxes={taxes}
-                suppliers={suppliers}
-                brands={brands}
-                colors={colors}
-                sizes={sizes}
-                imagePreviews={imagePreviews}
-                isUploadingImages={isUploadingImages}
-                handleRemoveImage={handleRemoveImage}
-                onTriggerImageUpload={triggerProductImageUpload}
-                stockToAdd={stockToAdd}
-                setStockToAdd={setStockToAdd}
-                stockBranchIds={stockBranchIds}
-                setStockBranchIds={setStockBranchIds}
-                branchOptions={posBranches}
-                stockLabel="Add Stock"
-                currentBranchStocks={currentBranchStocks}
-              />
-            )}
+            <ProductForm
+              onSubmit={handleUpdateProduct}
+              loading={formLoading}
+              submitText="Update Product"
+              formData={formData}
+              formErrors={formErrors}
+              updateFormData={updateFormData}
+              units={units}
+              categories={categories}
+              subcategories={subcategories}
+              taxes={taxes}
+              suppliers={suppliers}
+              brands={brands}
+              colors={colors}
+              sizes={sizes}
+              imagePreviews={imagePreviews}
+              handleRemoveImage={handleRemoveImage}
+              fileInputRef={fileInputRef}
+              handleImageSelect={handleImageSelect}
+              stockToAdd={stockToAdd}
+              setStockToAdd={setStockToAdd}
+              stockBranchIds={stockBranchIds}
+              setStockBranchIds={setStockBranchIds}
+              branchOptions={posBranches}
+              stockLabel="Add Stock"
+              currentBranchStocks={currentBranchStocks}
+            />
           </DialogContent>
         </Dialog>
 
@@ -2208,22 +2130,16 @@ export default function Inventory() {
         {isClient &&
           createPortal(
             <input
-              ref={productFileInputRef}
+              ref={fileInputRef}
+              id="images"
               type="file"
               multiple
-              accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
-              onChange={handleProductFileInputChange}
+              accept="image/*"
+              onChange={handleImageSelect}
+              className="hidden"
+              disabled={formLoading || imagePreviews.length >= 10}
               tabIndex={-1}
               aria-hidden="true"
-              style={{
-                position: "fixed",
-                left: "-9999px",
-                top: "-9999px",
-                width: 1,
-                height: 1,
-                opacity: 0,
-                pointerEvents: "none",
-              }}
             />,
             document.body,
           )}
